@@ -1,0 +1,105 @@
+© Copyright 2020-21 Mayo Foundation For Medical Education and Research (MFMER). All rights reserved. V 1.0.0 This software is provided as-is, without warranty or representation for any use or purpose. Your use of it is subject to your agreement with Mayo.
+Opioids
+Objective:
+
+identify patients on ‘Opioid Use’ or other terms that have been recorded in the problem list/patient profile (F11.2%)
+Create a dataset for training that includes medication, labs, co-morbidity, patient reported outcome
+Contents:
+Creating Patient Cohort
+Co-morbidities
+Outpatient Encounters
+Orders
+Lab Results
+Controlled Medication Order
+Patient Provided Information
+# Import Libraries
+import pandas as pd
+import sys
+sys.path.insert(1,'/apps/jupyter/utility/') #please modify this to match your julyter directory (1, '/home/jupyter/utility/')
+import diagnosis, patients, encounters, order, med, lab, ppi
+Creating patient cohort
+inclusion & exclusion criteria
+include_icd=["F11.2"]
+#Get relevant diagnosis code
+diagnosis_code=diagnosis.get_diagnosis_code_by_icd(include_icd)
+diagnosis_code.sort_values(['DIAGNOSIS_CODE', 'DIAGNOSIS_DESCRIPTION']).to_csv('opioid_diagnosis.csv')
+print("# of diagnosis for opioids:", diagnosis_code.shape[0])
+# Get patient cohort that match the above diagnosis codes
+opioid_use_patients=patients.get_patients_with_diagnosis(diagnosis_code)
+print("Number of unique patient diagnosed: ", opioid_use_patients.PATIENT_CLINIC_NUMBER.nunique())
+Co-morbidities
+# Get diagnosis code for depression
+include_comorbidities_depression=["depression"]
+diagnosis_code_depression=diagnosis.get_diagnosis_code(include_comorbidities_depression)
+opioid_use_patients=patients.get_patients_with_comorbidity(diagnosis_code_depression, opioid_use_patients, "has_depression")
+opioid_use_patients.has_depression.value_counts()
+#  subset
+opioid_use_patients_subset=opioid_use_patients.head(200)
+#alternate subset
+subset2=opioid_use_patients.loc[:1000]
+Outpatient Encounters
+%%time
+#Get relevant outpatient encounters
+include_visits=["PRC", "IAP", "CIM", "PM ", "FAM", "CIM"] #pass an empty list if you want to include all encounters
+#only using subset of patients & Getting all the appointments
+outpatient_encounters=encounters.get_epic_outpatient_encounters_for_cohort(opioid_use_patients_subset)
+#outpatient_encounters=encounters.get_epic_outpatient_encounters_for_cohort(opioid_use_patients, include_visits, 5000)
+print("Number of appointments: ",outpatient_encounters.shape[0])
+Orders
+%%time
+#Get Order Placed during appointment
+orders_outpatient_encounters=order.get_orders_by_encounters(outpatient_encounters, "APPOINTMENT_ID")
+orders_outpatient_encounters.ORDER_TYPE.value_counts()
+#Med Orders
+med_orders=orders_outpatient_encounters[(orders_outpatient_encounters.ORDER_TYPE=='MED')]
+#may consider active or dispensed medication
+active_med_orders=orders_outpatient_encounters[(orders_outpatient_encounters.ORDER_TYPE=='MED') & ((orders_outpatient_encounters.ORDER_STATUS=='ACTIVE MEDICATION') | (orders_outpatient_encounters.ORDER_STATUS=='DISPENSED MEDICATION'))]
+active_med_orders.shape[0]
+#Lab Order
+lab_orders=orders_outpatient_encounters[(orders_outpatient_encounters.ORDER_TYPE.str.contains('LAB', regex=True))]
+lab_orders.shape[0]
+Lab Results
+lab_results=lab.get_lab_result_by_encounters(outpatient_encounters, "APPOINTMENT_ID")
+lab_results.shape[0]
+Controlled Medication Order
+controlled_class=['1', '2', '3', '4','5', '6', '9' ]
+controlled=['Y']
+controlled_med_order=med.get_controlled_med_order_for_cohort(opioid_use_patients_subset, controlled , controlled_class, 100)
+controlled_med_order.head()
+Patient Provided Information
+patient_reported_outcome=ppi.get_ppi_for_cohort_by_form(opioid_use_patients_subset)
+patient_reported_outcome.shape[0]
+patient_reported_outcome.FORM_NAME.value_counts().to_csv('ppi_form.csv')
+Format dataframe
+Appointment
+outpatient_encounters.APPOINTMENT_DISPOSITION_NOTE.unique()
+completed_appointment=outpatient_encounters[(outpatient_encounters.APPOINTMENT_DISPOSITION_NOTE=='Completed')]
+completed_appointment['MERGE_DATE']=pd.to_datetime(completed_appointment['APPOINTMENT_BEGIN_DTM']).dt.date
+#Select ccolumns
+completed_appointment=completed_appointment[['PATIENT_DK','MERGE_DATE', 'APPOINTMENT_DESCRIPTION', 'APPOINTMENT_COMMENT', 'APPOINTMENT_REASON_TEXT' , 'CLINICAL_SERVICE_DK', 'PATIENT_AGE_AT_EVENT', 'LOCATION_SITE_NAME']]
+completed_appointment.head()
+Lab
+#filter the needed lab
+filtered_lab=lab_results[(lab_results.LAB_TEST_DESCRIPTION.str.contains('SCREEN', regex=True))]
+filtered_lab['MERGE_DATE']=pd.to_datetime(filtered_lab['LAB_ORDER_DTM']).dt.date
+filtered_lab_pivot=pd.pivot_table(filtered_lab,index=['PATIENT_DK', 'MERGE_DATE'],values=["RESULT_TXT"], columns=["LAB_TEST_DESCRIPTION"],aggfunc='first',fill_value="NULL")
+filtered_lab_pivot.columns=filtered_lab_pivot.columns.droplevel()
+filtered_lab_pivot=filtered_lab_pivot.reset_index(drop=False)
+filtered_lab_pivot.head()
+Controlled Medication
+controlled_med_order['MERGE_DATE']=pd.to_datetime(controlled_med_order['ORDER_DTM']).dt.date
+controlled_med_order_pivot=pd.pivot_table(controlled_med_order,index=['PATIENT_DK', 'MERGE_DATE'],values=["ORDER_STATUS"], columns=["MED_GENERIC"],aggfunc='last',fill_value="NULL")
+controlled_med_order_pivot.columns=controlled_med_order_pivot.columns.droplevel()
+controlled_med_order_pivot=controlled_med_order_pivot.reset_index(drop=False)
+controlled_med_order_pivot.head()
+controlled_med_order_pivot.shape
+#opioid_use_patients_subset.info()
+outpatient_encounters.info()
+#lab_results.info()
+#controlled_med_order.info()
+#patient_reported_outcome.info()
+#lab_results.LAB_TEST_DESCRIPTION.value_counts().to_csv('lab_test.csv')
+#lab_results.head()
+Merge Dataframe
+#merege dataframe by PATIENT_DK AND MERGE_DATE column
+#new_df = pd.merge(A_df, B_df,  how='left', left_on=['c1','c2'])
